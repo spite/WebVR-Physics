@@ -1,0 +1,843 @@
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<title>WebVR Physics</title>
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+
+		<meta property="og:url" content="http://www.clicktorelease.com/tmp/threejs/webvr-physics/"/>
+		<meta property="og:title" content="WebVR Physics "/>
+		<meta property="og:description" content="WebVR, WebGL, physics!"/>
+		<!--<meta property="og:image" content="http://www.clicktorelease.com/code/io15/assets/thumb-large.jpg"/> -->
+		<meta name="description" content="WebVR, WebGL, physics!">
+		<meta itemprop="name" content="WebVR Physics ">
+		<meta itemprop="description" content="WebVR, WebGL, physics!">
+		<!--<meta itemprop="image" content="http://www.clicktorelease.com/code/io15/assets/thumb-large.jpg">-->
+		<link href='https://fonts.googleapis.com/css?family=Roboto:400,700,300,100' rel='stylesheet' type='text/css'>
+		<style>
+			*{
+				box-sizing: border-box;
+				font-family: 'Roboto', sans-serif;
+				font-size: 13px;
+				font-weight: 300;
+				margin :0;w
+				padding: 0;
+			}
+			html {
+				height: 100%;
+			}
+			body {
+				margin: 0;
+				padding: 0;
+				background-color: #202020;
+				color: #ffffff;
+				line-height: 20px;
+				height: 100%;
+				overflow: hidden;
+				font-size: 13px;
+				font-weight: 100;
+			}
+			#container {
+				position: absolute;
+				left: 0;
+				top: 0;
+				right: 0;
+				bottom: 0;
+			}
+			#intro{
+				color: white;
+				padding: 20px;
+				z-index: 100;
+				position: absolute;
+				left: 0;
+				top: 0;
+			}
+			#intro h1{
+				font-weight: bold;
+			}
+			a{ color: inherit; opacity: .5; }
+			a:hover{ opacity: 1;}
+		</style>
+</head>
+	<body>
+
+		<div id="container"></div>
+
+		<div id="intro">
+			<h1>WebVR Physics</h1>
+			<p>You'll need a browser with WebVR 1.0 support <a href="https://webvr.info" rel="external">More info here.</a></p>
+			<p>Use the controllers: trigger to attract shapes, side grip to restart the shapes.</p>
+			<p>Look around and enjoy adding angular momentum in VR!</p>
+			<p><a href="https://webvr.info/" rel="external">WebVR 1.0</a> · <a href="http://threejs.org/" rel="external">WebGL + three.js</a> · <a href="https://github.com/borismus/webvr-boilerplate" rel="external">WebVR Boilerplate</a> · <a href="https://github.com/lo-th/Oimo.js/" rel="external">Oimo.js</a></p>
+			<p><iframe width="560" height="315" src="https://www.youtube.com/embed/bgOnM-nStaU?start=10" frameborder="0" allowfullscreen></iframe></p>
+			<input type="checkbox" id="advanced-mirroring" checked/> <label for="advanced-mirroring" >Advanced mirroring</label>
+			<p>While in Advanced Mirroring mode, you can rotate the camera in the browser independently.<br/>Clicking will throw an object towards the HMD.<br/>Try playing with someone throwing stuff and dodging or hitting back!</p>
+		</div>
+
+		<script src="js/Maf.js"></script>
+		<script src="js/three.min.js"></script>
+		<script src="js/OrbitControls.js"></script>
+		<script src="js/oimo.js"></script>
+
+		<script src="js/webvr-manager.js"></script>
+		<script src="js/VREffect.js"></script>
+		<script src="js/VRControls.js"></script>
+
+		<!--<script src="Wagner/Wagner.js"></script>
+		<script src="Wagner/Wagner.base.js"></script>
+		<script src="Wagner/ShaderLoader.js"></script>-->
+
+<script>
+
+/*WAGNER.vertexShadersPath = 'Wagner/vertex-shaders';
+WAGNER.fragmentShadersPath = 'Wagner/fragment-shaders';
+WAGNER.assetsPath = 'Wagner/assets/';*/
+
+var context = new AudioContext();
+//var mainGain = context.createGain();
+//mainGain.connect( context.destination );
+
+var source;
+
+
+var audioBuffer;
+loadSound( 'assets/wood_hit_wood_heavy_1.webm', function( b ) {
+	audioBuffer = b;
+
+	/*source = context.createBufferSource();
+	source.connect( panner );
+
+	source.loop = true;
+	source.buffer = audioBuffer;
+	source.start( 0 );*/
+
+} );
+
+var composer, bloomPass;
+var raycaster;
+var mouse = new THREE.Vector2();
+var intersection = {
+	position: new THREE.Vector3(),
+	normal: new THREE.Vector3()
+}
+
+var links = document.querySelectorAll( 'a[rel=external]' );
+for( var j = 0; j < links.length; j++ ) {
+	var a = links[ j ];
+	/*a.addEventListener( 'click', function( e ) {
+		window.open( this.href, '_blank' );
+		e.preventDefault();
+	}, false );*/
+	a.setAttribute("target", "_blank");
+}
+
+var isMobile = ( window.orientation !== undefined );
+var isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor );
+
+var camera, controls, outerControls,
+	scene, material,
+	renderer, world;
+var raycaster = new THREE.Raycaster();;
+
+var container = document.getElementById( 'container' );
+
+window.addEventListener( 'load', function(){
+	init();
+} );
+
+function setProgress( p ) {
+
+	progress.style.width = p / 100 * ( progress.parentNode.clientWidth - 4 ) + 'px';
+
+}
+
+function showProgress( state ) {
+
+	title.classList.toggle( 'visible', state );
+	progress.parentNode.classList.toggle( 'visible', state );
+	snapshotBtn.classList.toggle( 'visible', !state );
+
+}
+
+var bodies = [];
+var manager, effect, controls;
+var doAdvancedMirroring = true;
+var advancedMirroringCheckBox = document.getElementById( 'advanced-mirroring' );
+advancedMirroringCheckBox.addEventListener( 'change', function( e ) {
+	doAdvancedMirroring = this.checked;
+})
+
+var shapeCount = 0;
+function addOimoShape( type, pos, size, rot, mesh, move, paddle ) {
+
+	var obj = {};
+
+	mesh.castShadow = true;
+	mesh.receiveShadow = true;
+
+	var p = [ pos.x,pos.y,pos.z ];
+
+	if( type === 1 ) obj = { type:'sphere', pos: p, size:[size.x, size.x, size.x], move: move, world:world };
+	if( type === 2 ) obj = { type:'box', pos: p, size:[size.x,size.y,size.z], move: move, world:world };
+	if( type === 3 ) obj = {
+		type:'cylinder',
+		size: [ size.x, size.y, size.x, size.x, size.y, size.x, size.x, size.y, size.x, size.x, size.y, size.x ],
+		move: move,
+		pos: p,
+		world: world
+	};
+
+	var config = [
+        1, // The density of the shape.
+        0.4, // The coefficient of friction of the shape.
+        0.2, // The coefficient of restitution of the shape.
+        1, // The bits of the collision groups to which the shape belongs.
+        0xffffffff // The bits of the collision groups with which the shape collides.
+    ];
+
+    if( paddle ) {
+    	config[ 0 ] = 100;
+    	config[ 1 ] = 100;
+    }
+
+    obj.config = config;
+	//obj.noSleep = true;
+    obj.name = 'shape' + shapeCount;
+    shapeCount++;
+
+	var body = world.add( obj );
+	if( move ) {
+		bodies.push( { body: body, mesh: mesh, playTime: 0 } );
+	}
+
+	return body;
+
+}
+
+function loadSound( file, c ) {
+
+	var request = new XMLHttpRequest();
+	request.open( 'GET', file, true );
+	request.responseType = 'arraybuffer';
+
+	request.onload = function() {
+
+		context.decodeAudioData( request.response, function( buffer ) {
+
+			c( buffer );
+
+		}, function() {
+			console.log( 'error' );
+		} );
+
+	};
+
+	request.send();
+
+}
+
+function loadBodySound( body, file ) {
+
+	loadSound( file, function( b ) { body.audioBuffer = b } );
+
+}
+
+var gravity = .00098;// 9.8;//9.8;
+var isReset = false;
+
+function playSound( audioBuffer, position, strength ) {
+
+	if( !audioBuffer ) return;
+
+	var panner = context.createPanner();
+	panner.setPosition( position.x, position.y, position.z );
+	panner.connect( context.destination );
+
+	var gain = context.createGain();
+	gain.gain.value = .5 * strength;
+
+	source = context.createBufferSource();
+	source.connect( gain );
+	source.playbackRate.value = strength;
+	gain.connect( panner );
+
+	source.buffer = audioBuffer;
+	source.start( 0 );
+
+}
+
+var spotLight = new THREE.SpotLight( 0xffffff, .75 );
+var spotLight2 = new THREE.SpotLight( 0xffffff, .25 );
+var headLight = new THREE.SpotLight( 0xffffff );
+headLight.castShadow = true;
+headLight.angle = .5;
+headLight.penumbra = .5;
+spotLight2.shadow.mapSize.width = 256;
+spotLight2.shadow.mapSize.height = 256;
+
+var hmdDummy, hmdBody, cameraDummy, eyes = [], cameraLenses = [];
+var handlers = [], controllerDummies = [], controllerBodies = [];
+var grips = {};
+var outerCamera;
+function init() {
+
+	renderer = new THREE.WebGLRenderer( { antialias: true } );
+	var pixelRatio = window.devicePixelRatio;
+	renderer.setPixelRatio( pixelRatio );
+
+	scene = new THREE.Scene();
+
+	camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, .1, 1000 );
+	camera.position.set( 0, 4, 1 );
+	camera.lookAt( scene.position );
+	scene.add( camera );
+
+	outerCamera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, .1, 1000 );
+	outerCamera.position.set( 2, 2, 2 );
+	outerCamera.lookAt( scene.position );
+	scene.add( outerCamera );
+
+	var timestep = 1/60; //1/60;
+	var boardphase = 2;
+	var Iterations = 8;
+	var noStat = false;
+	world = new OIMO.World( timestep, boardphase, Iterations, noStat );
+	world.gravity = new OIMO.Vec3(0, -gravity, 0);
+	world.worldscale(1);
+
+	var s = 40;
+
+	var dummyMaterial = new THREE.MeshBasicMaterial( { side: THREE.BackSide } );
+	room = new THREE.Mesh( new THREE.BoxGeometry( 4, 4, 4 ), dummyMaterial );
+	dummy = new THREE.Mesh( new THREE.BoxGeometry( .1, .1, .1 ), new THREE.MeshNormalMaterial() );
+
+	var m = new THREE.MeshStandardMaterial( { roughness: .85, metalness: .5, emissive: 0x101010 } );
+	var mSphere = new THREE.MeshStandardMaterial( { roughness: .85, metalness: .5, emissive: 0x47080c, color: 0xdb3340 } );
+	var mBox = new THREE.MeshStandardMaterial( { roughness: .85, metalness: .5, emissive: 0x534810, color: 0xf2e394 } );
+	var mCylinder = new THREE.MeshStandardMaterial( { roughness: .85, metalness: .5, emissive: 0x0f4a4a, color: 0xa7dbdb } );
+	var mPaddle = new THREE.MeshStandardMaterial( { roughness: .85, metalness: .5, emissive: 0x6b3812, color: 0xff8a35 } );
+//	m = new THREE.MeshNormalMaterial( { wireframe: true, emissive: 0xff00ff });
+
+	spotLight.position.set( 0,5,0 );
+	spotLight.castShadow = true;
+	spotLight.angle = Math.PI / 4;
+	spotLight.penumbra = 0.05;
+	spotLight.decay = .2;
+	spotLight.distance = 10;
+	spotLight.shadow.mapSize.width = 1024;
+	spotLight.shadow.mapSize.height = 1024;
+	spotLight.shadow.camera.near = .1;
+	spotLight.shadow.camera.far = 10;
+	spotLight.shadow.bias = .00004
+
+	scene.add( spotLight );
+
+	spotLight2.position.set( 0, 50,0 );
+	spotLight2.castShadow = true;
+	spotLight2.angle = Math.PI / 8;
+	spotLight2.penumbra = 1;
+	spotLight2.decay = .2;
+	spotLight2.distance = 100;
+	spotLight2.shadow.mapSize.width = 1024;
+	spotLight2.shadow.mapSize.height = 1024;
+	spotLight2.shadow.camera.near = 1;
+	spotLight2.shadow.camera.far = 100;
+	spotLight2.shadow.bias = 0;
+
+	scene.add( spotLight2 );
+
+	scene.add( headLight );
+	scene.add( headLight.target )
+
+	//scene.add( lightHelper );
+
+	floor = new THREE.Mesh( new THREE.BoxGeometry( 600, 2, 600 ), m );
+	floor.position.y = -1;
+	scene.add( floor );
+
+	addOimoShape( 2, floor.position, new THREE.Vector3( 600, 2, 600 ), floor.rotation, floor, false );
+
+	hmdDummy = new THREE.Group();
+	var head = new THREE.Mesh( new THREE.BoxGeometry( .4, .2, .25 ), m );
+	head.castShadow = head.receiveShadow = true;
+	var eye = new THREE.Mesh( new THREE.CylinderGeometry( .05, .05, .05, 9, 1 ), m );
+	eye.castShadow = eye.receiveShadow = true;
+	eye.rotation.x = Math.PI / 2;
+	eye.position.z = -.125;
+	eye.position.x = .1;
+	var eye2 = eye.clone();
+	eye2.position.x = -.1;
+	hmdDummy.add( head );
+	hmdDummy.add( eye );
+	hmdDummy.add( eye2 );
+	eyes = [ eye, eye2 ];
+	scene.add( hmdDummy );
+	hmdBody = addOimoShape( 1, hmdDummy.position, new THREE.Vector3( .25, 0, 0 ), hmdDummy.rotation, hmdDummy, true, true );
+
+	cameraDummy = new THREE.Group();
+	cameraBody = new THREE.Mesh( new THREE.BoxGeometry( .25, .25, .25 ), m );
+	cameraBody.castShadow = cameraBody.receiveShadow = true;
+	var lens = new THREE.Mesh( new THREE.BoxGeometry( .1, .1, .1 ), m );
+	lens.position.z = -.125
+	lens.castShadow = lens.receiveShadow = true;
+	var lens2 = new THREE.Mesh( new THREE.CylinderGeometry( .11, .11, .125, 18, 1 ), m );
+	lens2.rotation.x = Math.PI / 2;
+	lens2.position.z = -.225
+	lens2.castShadow = lens2.receiveShadow = true;
+	cameraLenses = [ lens, lens2 ];
+	cameraDummy.add( lens )
+	cameraDummy.add( lens2 );
+	cameraDummy.add( cameraBody )
+	scene.add( cameraDummy );
+
+	// SHAPES
+
+	/*loadBodySound( bodies[ 'cylinderO' ], 'assets/wood_hit_wood_heavy_1.mp3' );
+	loadBodySound( bodies[ 'boxI' ], 'assets/wood_hit_brick_1.mp3' );
+	loadBodySound( bodies[ 'boxSlash' ], 'assets/wood_hit_plastic_1.mp3' );*/
+
+	for( var j = 0; j < 50; j++ ) {
+
+		var r1 = Maf.randomInRange( .1, .5 );
+		var r2 = Maf.randomInRange( .1, 1 );
+
+		cylinderO = new THREE.Mesh( new THREE.CylinderGeometry( r1, r1, r2, 36, 1 ), mCylinder );
+		scene.add( cylinderO );
+
+		addOimoShape( 3, cylinderO.position, new THREE.Vector3( r1, r2, r1 ), cylinderO.quaternion, cylinderO, true );
+
+		var r1 = Maf.randomInRange( .2, 1 );
+		var r2 = Maf.randomInRange( .2, 1 );
+		var r3 = Maf.randomInRange( .2, 1 );
+		boxI = new THREE.Mesh( new THREE.BoxGeometry( r1, r2, r3, 1, 1, 1 ), mBox );
+		scene.add( boxI );
+
+		addOimoShape( 2, boxI.position, new THREE.Vector3( r1, r2, r3 ), boxI.quaternion, boxI, true );
+
+		var r1 = Maf.randomInRange( .1, .5 );
+		boxSlash = new THREE.Mesh( new THREE.IcosahedronGeometry( r1, 2 ), mSphere );
+		scene.add( boxSlash );
+
+		addOimoShape( 1, boxSlash.position, new THREE.Vector3( r1, 0, 0 ), boxSlash.quaternion, boxSlash, true );
+
+	}
+
+	var r1 = .25, r2= .1, r3 = .5;
+	for( var j = 0; j < 10; j++ ) {
+		handlers.push( new THREE.Mesh( new THREE.BoxGeometry( r1, r2, r3 ), mPaddle ) );
+	}
+
+	handlers.forEach( function( b ) {
+		scene.add( b );
+		b.body = addOimoShape( 2, b.position, new THREE.Vector3( r1, r2, r3 ), b.quaternion, b, true, true );
+		b.visible = false
+		b.force = new THREE.Vector3( 0, 0, 0 );
+	} );
+
+	world.step();
+	resetPositions();
+
+	setInterval(oimoLoop, timestep*1000);
+
+	function onDocumentClick( e ) {
+
+		if( !doAdvancedMirroring ) return;
+
+		if( e.touches && e.touches.length ) {
+			mouse.x = ( e.touches[ 0 ].pageX / window.innerWidth ) * 2 - 1;
+			mouse.y = - ( e.touches[ 0 ].pageY / window.innerHeight ) * 2 + 1;
+		} else {
+			mouse.x = ( e.clientX / window.innerWidth ) * 2 - 1;
+			mouse.y = - ( e.clientY / window.innerHeight ) * 2 + 1;
+		}
+
+		/*raycaster.setFromCamera( mouse, camera );
+
+		var intersects = raycaster.intersectObjects( [ room ] );
+
+		if ( intersects.length > 0 ) {
+			intersection.position.copy( intersects[ 0 ].point );
+			intersection.normal.copy( intersects[ 0 ].face.normal );
+			dummy.position.copy( intersection.position );
+		}
+
+		shootScene();*/
+
+		dirVector.set( 0, 0, -10 );
+		dirVector.applyQuaternion( outerCamera.quaternion );
+		dirVector.normalize();
+
+		var body = bodies[ Math.floor( Math.random() * 100 ) ].body;
+		body.resetPosition( outerCamera.position.x, outerCamera.position.y, outerCamera.position.z );
+		body.setQuaternion( outerCamera.quaternion );
+		body.linearVelocity.set( dirVector.x, dirVector.y, dirVector.z );
+		var r = 40;
+		body.angularVelocity.set( Maf.randomInRange( -r, r ), Maf.randomInRange( -r, r ), Maf.randomInRange( -r, r ) );
+
+		e.preventDefault();
+
+	}
+
+	function jumbleScene() {
+
+		randomizeAngularVelocity( bodies[ 'cylinderO' ].body );
+		randomizeAngularVelocity( bodies[ 'boxSlash' ].body );
+		randomizeAngularVelocity( bodies[ 'boxI' ].body );
+
+	}
+
+	var tmpDir = new THREE.Vector3();
+	var tmpForce = new THREE.Vector3();
+
+	function shootObject( body, position, normal ) {
+
+		tmpDir.set( body.position.x, body.position.y, body.position.z );
+		tmpDir.sub( position );
+		var length = tmpDir.length();
+		tmpDir.normalize();
+		var max = 2;
+		if( length > max ) length = max;
+		var strength = max - length;
+		tmpDir.sub( normal );
+		tmpDir.normalize();
+		tmpDir.multiplyScalar( Math.sqrt( strength ) );
+		tmpDir.multiplyScalar( 20 );
+
+		body.linearVelocity.set( tmpDir.x, tmpDir.y, tmpDir.z );
+		tmpDir.multiplyScalar( 4 );
+		body.linearVelocity.set( tmpDir.x, tmpDir.y, tmpDir.z );
+
+	}
+
+	function shootScene() {
+
+		bodies.forEach( function (b ) {
+			shootObject( b.body, intersection.position, intersection.normal );
+		})
+
+	}
+
+	function randomizeAngularVelocity( body ) {
+
+		max = 40;
+		body.angularVelocity.x = ( .5 - Math.random() ) * max;
+		body.angularVelocity.y = Math.random() * max;
+		body.angularVelocity.z = ( .5 - Math.random() ) * max;
+		max = 40;
+		body.linearVelocity.x = ( .5 - Math.random() ) * max;
+		body.linearVelocity.y = ( .5 - Math.random() ) * max;
+		body.linearVelocity.z = ( .5 - Math.random() ) * max;
+
+	}
+
+	document.addEventListener( 'keydown', function( e ) {
+
+		if( e.keyCode === 32 ) {
+			jumbleScene();
+		}
+		if( e.keyCode == 88 ) {
+			resetPositions();
+		}
+		if( e.keyCode == 67 ) {
+			nextCamera();
+		}
+	} );
+
+	function oimoLoop() {
+
+		//attract(.1);
+
+		world.step();
+
+		var pads = [];
+		var gamepads = navigator.getGamepads();
+		for (var i = 0; i < gamepads.length; ++i) {
+			var gamepad = gamepads[i];
+			if (gamepad && gamepad.pose && gamepad.pose.position ) {
+				pads[ gamepad.index ] = gamepad;
+			}
+		}
+
+		handlers.forEach( function( h ) {
+			h.visible = false;
+			h.force.multiplyScalar( .5 );
+			if( h.force.length() < .1 ) h.force.set( 0, 0, 0 );
+		} );
+
+		pads.forEach( function( h, id ) {
+
+			world.gravity = new OIMO.Vec3( h.axes[ 0 ], -gravity, h.axes[ 1 ] );
+
+			var handler = handlers[ id ];
+
+			handler.position.fromArray( h.pose.position )
+			handler.quaternion.fromArray( h.pose.orientation )
+			handler.updateMatrix()
+			handler.applyMatrix( sTSMat )
+			handler.visible = true;
+
+			handler.body.setPosition( handler.position );
+			handler.body.setQuaternion( handler.quaternion );
+
+			if( grips[ id ] === undefined ) grips[ id ] = false;
+
+			if( h.buttons[ 2 ].pressed ) {
+				if( !grips[ id ] ) {
+					resetPositions();
+					grips[ id ] = true;
+				}
+			} else {
+				grips[ id ] = false;
+			}
+
+			if( h.buttons[ 1 ].pressed ) {
+				attract( 1 * h.buttons[ 1 ].value );
+			}
+
+			bodies.forEach( b => {
+				if( !handlers.some( h => h.body === b.body ) && b.body !== hmdBody ) {
+					if( world.checkContact( handler.body.name, b.body.name ) ) {
+						handler.force.x += ( b.body.linearVelocity.x * b.body.mass ) - ( handler.body.linearVelocity.x * handler.body.mass );
+						handler.force.y += ( b.body.linearVelocity.y * b.body.mass ) - ( handler.body.linearVelocity.y * handler.body.mass );
+						handler.force.z += ( b.body.linearVelocity.z * b.body.mass ) - ( handler.body.linearVelocity.z * handler.body.mass );
+					}
+				}
+			})
+
+		} );
+
+		pads.forEach( function( h, id ) {
+			if( 'haptics' in h && h.haptics.length > 0 ) {
+				var handler = handlers[ id ];
+				if( handler.force.length() > 0 ) {
+					var force = handler.force.length();
+					h.haptics[ 0 ].vibrate( 1., force );
+					//playSound( audioBuffer, handler.body.position, .001 * force )
+				}
+			}
+		} );
+
+		var n = performance.now();
+
+		bodies.forEach( function( b ) {
+
+			b.mesh.position.copy( b.body.getPosition() );
+			b.mesh.quaternion.copy( b.body.getQuaternion() );
+			b.body.sleepTime = 0;
+
+			/*bodies.forEach( function( b2 ) {
+
+				if( b !== b2 ) {
+					if( world.checkContact( b.body.name, b2.body.name ) ) {
+						if( n - b.playTime > 100 ) {
+							b.playTime = n;
+							tmpForce.x = ( b.body.linearVelocity.x * b.body.mass ) - ( b2.body.linearVelocity.x * b2.body.mass );
+							tmpForce.y = ( b.body.linearVelocity.y * b.body.mass ) - ( b2.body.linearVelocity.y * b2.body.mass );
+							tmpForce.z = ( b.body.linearVelocity.z * b.body.mass ) - ( b2.body.linearVelocity.z * b2.body.mass );
+							playSound( audioBuffer, b.body.position, tmpForce.length() )
+						}
+					}
+				}
+			});*/
+
+		} );
+
+	}
+
+	outerControls = new THREE.OrbitControls( outerCamera, renderer.domElement );
+
+	controls = new THREE.VRControls(camera);
+	controls.standing = true;
+
+	effect = new THREE.VREffect( renderer, function(){}, function( hmd ) {
+		var w = 3, d = 5;
+		var h = 4
+		if( hmd.stageParameters ) {
+			w = hmd.stageParameters.sizeX;
+			d = hmd.stageParameters.sizeZ;
+			sTSMat.fromArray( hmd.stageParameters.sittingToStandingTransform )
+		}
+
+	} );
+
+	effect.setSize(window.innerWidth, window.innerHeight);
+
+	var params = {
+		hideButton: false, // Default: false.
+		isUndistorted: false // Default: false.
+	};
+	manager = new WebVRManager(renderer, effect, params);
+
+	/*composer = new WAGNER.Composer( renderer, { useRGBA: true } );
+	bloomPass = new WAGNER.MultiPassBloomPass();
+	bloomPass.params.blurAmount = 1;
+	vignettePass = new WAGNER.VignettePass();
+	vignettePass.params.amount = .5;
+	chromaticAberrationPass = new WAGNER.ChromaticAberrationPass();
+	fxaaPass = new WAGNER.FXAAPass();*/
+
+	container.appendChild( renderer.domElement );
+
+	window.addEventListener( 'resize', onWindowResized );
+	onWindowResized( null );
+
+	container.addEventListener( 'mousedown', onDocumentClick, false );
+	container.addEventListener( 'touchstart', onDocumentClick, false );
+
+	renderer.shadowMap.enabled = true;
+	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+	renderer.gammaInput = true;
+	renderer.gammaOutput = true;
+
+	manager.setMode_( 3 )
+
+	animate();
+
+}
+
+function showMessage( msg ) {
+
+	message.textContent = msg;
+
+}
+
+function onWindowResized( event ) {
+
+	effect.setSize(container.clientWidth, container.clientHeight);
+	//renderer.setSize( container.clientWidth, container.clientHeight );
+	camera.aspect = container.clientWidth / container.clientHeight;
+	camera.updateProjectionMatrix();
+	outerCamera.aspect = container.clientWidth / container.clientHeight;
+	outerCamera.updateProjectionMatrix();
+	//composer.setSize( renderer.domElement.width, renderer.domElement.height );
+
+	renderer.domElement.style.width = '100%';
+	renderer.domElement.style.height = '100%';
+
+}
+
+function animate() {
+
+	requestAnimationFrame( animate );
+	render();
+
+}
+
+function attract( power ) {
+
+	var tmp = new THREE.Vector3();;
+
+	bodies.forEach( b => {
+
+		tmp.copy( camera.position );
+		tmp.sub( b.mesh.position );
+		tmp.normalize();
+		tmp.multiplyScalar( power || 1 );
+		b.body.linearVelocity.x = tmp.x;
+		b.body.linearVelocity.y = tmp.y;
+		b.body.linearVelocity.z = tmp.z;
+
+
+	} );
+
+}
+
+function resetPositions() {
+
+	function randomizeAngularVelocity( body ) {
+
+		max = 1;
+		body.angularVelocity.x = 0;// 10;// ( .5 - Math.random() ) * max;
+		body.angularVelocity.y = 0;// ( .5 - Math.random() ) * max;
+		body.angularVelocity.z = 0;// ( .5 - Math.random() ) * max;
+		max = 10;
+		body.linearVelocity.x = 0;//( .5 - Math.random() ) * max;
+		body.linearVelocity.y = 0;//( .5 - Math.random() ) * max;
+		body.linearVelocity.z = 0;//( .5 - Math.random() ) * max;
+	}
+
+	bodies.forEach( function (b ) {
+
+		var e = new THREE.Euler();
+		e.set( Math.PI / 2, 0, 0 );
+		var q = new THREE.Quaternion();
+		q.setFromEuler( e );
+
+		var max = 2;
+		b.body.resetPosition( Maf.randomInRange( -max, max ), Maf.randomInRange( 4, max + 4 ), Maf.randomInRange( -max, max ) );
+		b.body.setQuaternion( q );
+
+		randomizeAngularVelocity( b.body );
+
+	} )
+
+}
+
+var tmpMatrix = new THREE.Matrix4();
+var materials = [];
+var sTSMat = new THREE.Matrix4();
+var dirVector = new THREE.Vector3( 0, 0, -1 );
+
+function render( timestamp ) {
+
+	if( controls ) controls.update();
+
+	var m = camera.matrix;
+
+	var mx = m.elements[12], my = m.elements[13], mz = m.elements[14];
+	m.elements[12] = m.elements[13] = m.elements[14] = 0;
+
+	// Multiply the orientation vector by the world matrix of the camera.
+	var vec = new THREE.Vector3(0,0,1);
+	vec.applyProjection(m);
+	vec.normalize();
+
+	// Multiply the up vector by the world matrix.
+	var up = new THREE.Vector3(0,-1,0);
+	up.applyProjection(m);
+	up.normalize();
+
+	// Set the orientation and the up-vector for the listener.
+	context.listener.setOrientation(vec.x, vec.y, vec.z, up.x, up.y, up.z);
+	context.listener.setPosition( camera.position.x, camera.position.y, camera.position.z );
+
+	hmdBody.setPosition( camera.position );
+	hmdBody.setQuaternion( camera.quaternion );
+	headLight.position.copy( camera.position );
+
+	dirVector.set( 0, 0, -10 );
+	dirVector.applyQuaternion( camera.quaternion );
+	headLight.target.position.copy( headLight.position );
+	headLight.target.position.add( dirVector );
+
+	cameraDummy.visible = doAdvancedMirroring;
+
+	eyes.forEach( e => e.visible = false );
+	//renderer.render( scene, camera );
+	manager.render(scene, camera, timestamp);
+	eyes.forEach( e => e.visible = true );
+
+	if( doAdvancedMirroring ) {
+		cameraLenses.forEach( e => e.visible = false )
+		cameraDummy.visible = true;
+		outerCamera.lookAt( camera.position );
+		cameraDummy.position.copy( outerCamera.position );
+		cameraDummy.quaternion.copy( outerCamera.quaternion );
+
+		renderer.setScissorTest( false );
+		var size = renderer.getSize();
+		renderer.setViewport( 0, 0, size.width, size.height );
+		renderer.render( scene, outerCamera );
+		cameraLenses.forEach( e => e.visible = true )
+	} else {
+		cameraDummy.visible = true;
+	}
+
+}
+
+</script>
+
+	</body>
+</html>
