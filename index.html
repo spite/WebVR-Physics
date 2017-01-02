@@ -826,9 +826,6 @@ function render( timestamp ) {
 		cameraDummy.position.copy( outerCamera.position );
 		cameraDummy.quaternion.copy( outerCamera.quaternion );
 
-		renderer.setScissorTest( false );
-		var size = renderer.getSize();
-		renderer.setViewport( 0, 0, size.width, size.height );
 		renderer.render( scene, outerCamera );
 		cameraLenses.forEach( e => e.visible = true )
 	} else {
